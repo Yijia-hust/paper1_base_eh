@@ -18,8 +18,8 @@ for i=1:m
 end
 for i=1:m
     if (c2(i)==0)&&(c1(i)==0)&&(c0(i)==0)
-        A(i,j)=0;
-        B(i,j)=0;
+        A(i,:)=0;
+        B(i,:)=0;
     else
         for j=1:Q
             A(i,j)=(Y(i,j+1)-Y(i,j))/interval(i);

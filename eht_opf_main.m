@@ -1,7 +1,7 @@
 clear;
 clc;
 yalmip('clear')
-eht_opf_init_V34;  % 系统拓扑等参数
+eht_opf_init;  % 系统拓扑等参数
 
 %% ================== 定义未知量 (整合) ==================
 % --- 电网侧变量 ---
@@ -92,8 +92,8 @@ Constraints=[Constraints;0<=Dd<=bus_day];
 
 % --- HGS 内部逻辑 (已验证) ---
 % HGS耗电与产氢关系
-Constraints=[Constraints;P_p2h*eta_p2h==Q_gen];
-Constraints=[Constraints;P_ep==Q_gen*eta_h2c];
+Constraints=[Constraints;P_p2h*eta_p2h*delta_t==Q_gen];
+Constraints=[Constraints;P_ep*delta_t==Q_gen*eta_h2c];
 Constraints=[Constraints;PH==P_p2h+P_ep];
 Constraints=[Constraints;PHmin<=PH<=PHmax];
 % HGS氢气平衡
@@ -115,6 +115,9 @@ Constraints=[Constraints;s2>=0];
 Constraints=[Constraints;0<=Q_in<=Qin_max];
 Constraints=[Constraints;0<=Q_out<=Qout_max];
 
+% 20260711增加
+Constraints = [Constraints; 0 <= Q_gen <= Qgen_max];  % 限制HGS每小时最大制氢量
+Constraints = [Constraints; 0 <= Q_DT  <= QDT_hour_max];  % 限制车辆在HGS处每小时最大装载量
 
 
 % ================== 第二、三、四部分: 运输与HLC逻辑 (核心) ==================
@@ -185,8 +188,8 @@ for d=1:N_dt  % 如果放松模型可以注释掉大M约束的>=边
                 % 情况 1: 从 HGS (j=id_hgs) 出发
                 if j == id_hgs
                     expression = t_arr(d,j) + T_tra(j,k) - t_arr(d,k);
-                    Constraints = [Constraints; expression <= M * (1 - I(d,j,k))];
-                    Constraints = [Constraints; expression >= -M * (1 - I(d,j,k))];
+                    Constraints = [Constraints; expression <= M_time * (1 - I(d,j,k))];
+                    Constraints = [Constraints; expression >= -M_time * (1 - I(d,j,k))];
                 
                 % 情况 2: 从 HLC (j~=id_hgs) 出发
                 else
@@ -194,13 +197,13 @@ for d=1:N_dt  % 如果放松模型可以注释掉大M约束的>=边
                     % 情况 2a: 从 HLC 返回 HGS (k=id_hgs)
                     if k == id_hgs
                         expression = t_arr(d,j) + T_ser_hlc(d,hlc_idx) + T_tra(j,k) - t_return(d);
-                        Constraints = [Constraints; expression <= M * (1 - I(d,j,k))];
-                        Constraints = [Constraints; expression >= -M * (1 - I(d,j,k))];
+                        Constraints = [Constraints; expression <= M_time * (1 - I(d,j,k))];
+                        Constraints = [Constraints; expression >= -M_time * (1 - I(d,j,k))];
                     % 情况 2b: 从 HLC 前往另一个 HLC
                     else
                         expression = t_arr(d,j) + T_ser_hlc(d,hlc_idx) + T_tra(j,k) - t_arr(d,k);
-                        Constraints = [Constraints; expression <= M * (1 - I(d,j,k))];
-                        Constraints = [Constraints; expression >= -M * (1 - I(d,j,k))];
+                        Constraints = [Constraints; expression <= M_time * (1 - I(d,j,k))];
+                        Constraints = [Constraints; expression >= -M_time * (1 - I(d,j,k))];
                     end
                 end
             end
@@ -232,7 +235,7 @@ for d=1:N_dt
                     Constraints = [Constraints; I(d,j,k) == 0];
                 else
                     expression = Qv_dep(d,j) - Qv_arr(d,k);  % 路上无损耗
-                    Constraints = [Constraints; expression <= M*(1-I(d,j,k)); expression >= -M*(1-I(d,j,k))];
+                    Constraints = [Constraints; expression <= M_h2*(1-I(d,j,k)); expression >= -M_h2*(1-I(d,j,k))];
                 end
             end
         end
@@ -242,8 +245,8 @@ epsilon = 1e-4;
 for d=1:N_dt
 %     Constraints = [Constraints; sum(x_HGS(d,:)) <= 1]; % 每辆车最多装载1次
     for i=1:t
-        Constraints = [Constraints; t_arr(d,id_hgs) >= i - M * (1 - x_HGS(d,i))];
-        Constraints = [Constraints; t_arr(d,id_hgs) <= (i + 1 - epsilon) + M * (1 - x_HGS(d,i))];
+        Constraints = [Constraints; t_arr(d,id_hgs) >= i - M_time * (1 - x_HGS(d,i))];
+        Constraints = [Constraints; t_arr(d,id_hgs) <= (i + 1 - epsilon) + M_time * (1 - x_HGS(d,i))];
     end
     Constraints = [Constraints; sum(Q_dt(d,:)) == Q_dt_event(d)];  % 增加约束
 end
@@ -257,8 +260,8 @@ for d=1:N_dt
         n = id_hlc(m);
 %         Constraints = [Constraints; sum(x_HLC(d,m,:)) <= 1];
         for i=1:t
-            Constraints = [Constraints; t_arr(d,n) >= (i - 1 + epsilon) - M * (1 - x_HLC(d,m,i))];
-            Constraints = [Constraints; t_arr(d,n) <= i + M * (1 - x_HLC(d,m,i))];
+            Constraints = [Constraints; t_arr(d,n) >= (i - 1 + epsilon) - M_time * (1 - x_HLC(d,m,i))];
+            Constraints = [Constraints; t_arr(d,n) <= i + M_time * (1 - x_HLC(d,m,i))];
             Constraints = [Constraints; Q_ser_min * x_HLC(d,m,i) <= q_ser_dit(d,m,i) <= Q_ser_max * x_HLC(d,m,i)];
         end
         Constraints = [Constraints; sum(q_ser_dit(d,m,:),3) == Q_ser_hlc(d,m)];  % 增加约束
@@ -269,22 +272,23 @@ end
 % 改回HGS处帽子约束
 for d=1:N_dt
     for i=1:t
-        Constraints = [Constraints; Q_dt(d,i) <= Q_dt_event(d,1) + M*(1 - x_HGS(d,i))];
-        Constraints = [Constraints; Q_dt(d,i) >= Q_dt_event(d,1) - M*(1 - x_HGS(d,i))];
+        Constraints = [Constraints; Q_dt(d,i) <= Q_dt_event(d,1) + M_h2*(1 - x_HGS(d,i))];
+        Constraints = [Constraints; Q_dt(d,i) >= Q_dt_event(d,1) - M_h2*(1 - x_HGS(d,i))];
     end
 end
 % 改回HLC处帽子约束
 for d=1:N_dt
     for m = 1:Nc
         for i=1:t
-            Constraints = [Constraints; q_ser_dit(d,m,i) <= Q_ser_hlc(d,m) + M*(1 - x_HLC(d,m,i))];
-            Constraints = [Constraints; q_ser_dit(d,m,i) >= Q_ser_hlc(d,m) - M*(1 - x_HLC(d,m,i))];
+            Constraints = [Constraints; q_ser_dit(d,m,i) <= Q_ser_hlc(d,m) + M_h2*(1 - x_HLC(d,m,i))];
+            Constraints = [Constraints; q_ser_dit(d,m,i) >= Q_ser_hlc(d,m) - M_h2*(1 - x_HLC(d,m,i))];
         end
     end
 end
 % 添加sum(x_HGS)<=sum(I)--约束11c
 for d = 1:N_dt
-    Constraints = [Constraints; sum(x_HGS(d,:)) <= sum(I(d,id_hgs,:))];
+    % Constraints = [Constraints; sum(x_HGS(d,:)) <= sum(I(d,id_hgs,:))];
+    Constraints = [Constraints;sum(x_HGS(d,:)) == v_is_used(d);];  % 每辆出车车辆必须且只能有一个装氢时段，未出车车辆不能产生装氢事件
 end
 % 添加z=sum(x_HLC)<=sum(I)--约束12c
 for d = 1:N_dt
@@ -351,13 +355,13 @@ for d=1:N_dt
         end
     end
 end
-penalty_h2_shed = 4000;
-vv=500; % 每出1辆车是500元
-objective = sum(F_tu(:)) + [50,48]*sum(DW,2) + c_Dd*sum(Dd,2)+travel_cost+penalty_h2_shed*sum(HLC_load_shed(:))+5000*(sum(s1)+sum(s2))+vv*sum(v_is_used);
+penalty_h2_shed = 1000;
+vv=500; % 每出1辆车是500元-----不要这个+vv*sum(v_is_used)了
+objective = sum(F_tu(:)) + [50,48]*sum(DW,2) + c_Dd*sum(Dd,2)+travel_cost+penalty_h2_shed*sum(HLC_load_shed(:))+5000*(sum(s1)+sum(s2));
 
 % options=sdpsettings('solver','mosek', 'verbose', 2);
 % options = sdpsettings('solver', 'mosek', 'verbose', 2, 'mosek.MSK_DPAR_MIO_TOL_REL_GAP', 0.02);  % 写0.02约20秒解出，写0.013约2分钟解出，但结果完全不同且都有错
-options = sdpsettings('solver', 'gurobi', 'verbose', 2, 'gurobi.MIPGap', 0.03); 
+options = sdpsettings('solver', 'gurobi', 'verbose', 2, 'gurobi.MIPGap', 0.001); 
 % options = sdpsettings('solver', 'gurobi', 'verbose', 2);  % 不允许gap
 
 
@@ -522,3 +526,42 @@ disp(PH_show)
 % SOC
 fprintf('储氢罐SOC:\n')
 disp(SOC_show)
+
+
+fprintf('总缺氢量：%.4f kg\n',sum(HLC_load_shed_show(:)));
+fprintf('期末SOC偏差 s1：%.6f\n',value(s1));
+fprintf('期末SOC偏差 s2：%.6f\n',value(s2));
+fprintf('车辆总装氢量：%.4f kg\n',sum(Q_dt_event_show));
+
+% 想检查是否存在“同一时段同时充氢和放氢”
+Q_in_show = double(Q_in);
+Q_out_show = double(Q_out);
+tol = 1e-6;
+sim_idx = find(Q_in_show > tol & Q_out_show > tol);
+
+if isempty(sim_idx)
+    disp('未出现同时充氢和放氢');
+else
+    fprintf('同时充放氢的时段：');
+    fprintf('%d ',sim_idx);
+    fprintf('\n最大同时充放量：%.4f kg\n', ...
+        max(min(Q_in_show(sim_idx),Q_out_show(sim_idx))));
+end
+
+% 约束残差，若结果不低于约 -1e-5 就可用
+residual = check(Constraints);
+fprintf('最小约束裕度：%.3e\n',min(residual));
+
+% 判断HLC期末库存是否回到初始库存
+tol_hlc = 1e-4;
+hlc_terminal_diff = Q_hlc_show(:,end) - Q_hlc_init;
+
+if max(abs(hlc_terminal_diff)) <= tol_hlc
+    fprintf('HLC期末库存已回到初始库存。\n');
+else
+    fprintf('HLC期末库存未回到初始库存；总增加量：%.4f kg，最大单站偏差：%.4f kg。\n', ...
+        sum(hlc_terminal_diff), max(abs(hlc_terminal_diff)));
+end
+
+% 方便比较不同gap
+fprintf('目标函数值：%.4f\n',cost);
